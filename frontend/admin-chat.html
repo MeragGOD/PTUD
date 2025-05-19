@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Customer Service</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        .container {
+            display: flex;
+            height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .user-list {
+            width: 300px;
+            border-right: 1px solid #ddd;
+            padding-right: 20px;
+            overflow-y: auto;
+        }
+        .chat-container {
+            flex: 1;
+            padding-left: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        .user-item {
+            padding: 10px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .user-item:hover {
+            background-color: #f5f5f5;
+        }
+        .user-item.active {
+            background-color: #e3f2fd;
+            border-color: #2196F3;
+        }
+        .message-container {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            padding: 10px;
+            margin-bottom: 10px;
+            background-color: #f9f9f9;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            max-width: 80%;
+        }
+        .message.sent {
+            background-color: #e3f2fd;
+            margin-left: auto;
+        }
+        .message.received {
+            background-color: #f5f5f5;
+            margin-right: auto;
+        }
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+        input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #1976D2;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .header h2 {
+            color: #1976D2;
+            margin: 0;
+        }
+        .header p {
+            color: #666;
+            margin: 5px 0;
+        }
+        .user-info {
+            font-size: 0.9em;
+            color: #666;
+        }
+        .unread {
+            background-color: #fff3e0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="user-list">
+            <div class="header">
+                <h2>Customer Messages</h2>
+                <p>Select a customer to view conversation</p>
+            </div>
+            <div id="userList"></div>
+        </div>
+        <div class="chat-container">
+            <div class="header">
+                <h2 id="currentUser">Select a customer</h2>
+                <p id="userInfo"></p>
+            </div>
+            <div class="message-container" id="messageContainer"></div>
+            <div class="input-container">
+                <input type="text" id="messageInput" placeholder="Type your response here...">
+                <button onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let currentUser = null;
+        let conversations = new Map();
+
+        function connect() {
+            const socket = new SockJS('/ws');
+            stompClient = Stomp.over(socket);
+            
+            const token = localStorage.getItem('token');
+            
+            stompClient.connect({
+                'Authorization': 'Bearer ' + token
+            }, onConnected, onError);
+        }
+
+        function onConnected() {
+            console.log('Connected to WebSocket');
+            
+            // Subscribe to personal queue
+            stompClient.subscribe('/user/queue/messages', onMessageReceived);
+            
+            // Load conversations
+            loadConversations();
+        }
+
+        function onError(error) {
+            console.error('Error connecting to WebSocket:', error);
+        }
+
+        function loadConversations() {
+            fetch('/api/chat/conversations', {
+                headers: {
+                    'Authorization': 'Bearer ' + localStorage.getItem('token')
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                const userList = document.getElementById('userList');
+                userList.innerHTML = '';
+                
+                data.forEach(message => {
+                    const user = message.sender;
+                    if (!conversations.has(user.id)) {
+                        conversations.set(user.id, []);
+                    }
+                    conversations.get(user.id).push(message);
+                    
+                    const userElement = document.createElement('div');
+                    userElement.classList.add('user-item');
+                    if (!message.read) {
+                        userElement.classList.add('unread');
+                    }
+                    userElement.innerHTML = `
+                        <div>${user.username}</div>
+                        <div class="user-info">Last message: ${new Date(message.timestamp).toLocaleString()}</div>
+                    `;
+                    userElement.onclick = () => selectUser(user);
+                    userList.appendChild(userElement);
+                });
+            });
+        }
+
+        function selectUser(user) {
+            currentUser = user;
+            document.getElementById('currentUser').textContent = user.username;
+            document.getElementById('userInfo').textContent = `Email: ${user.email}`;
+            
+            // Load messages for this user
+            loadMessages(user.id);
+            
+            // Update UI
+            document.querySelectorAll('.user-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            event.currentTarget.classList.add('active');
+        }
+
+        function loadMessages(userId) {
+            fetch(`/api/chat/messages/${userId}`, {
+                headers: {
+                    'Authorization': 'Bearer ' + localStorage.getItem('token')
+                }
+            })
+            .then(response => response.json())
+            .then(messages => {
+                const messageContainer = document.getElementById('messageContainer');
+                messageContainer.innerHTML = '';
+                
+                messages.forEach(message => {
+                    displayMessage(message);
+                });
+                
+                // Mark messages as read
+                messages.forEach(message => {
+                    if (!message.read) {
+                        markAsRead(message.id);
+                    }
+                });
+            });
+        }
+
+        function sendMessage() {
+            if (!currentUser) {
+                alert('Please select a customer first');
+                return;
+            }
+
+            const messageInput = document.getElementById('messageInput');
+            
+            if (messageInput.value) {
+                const chatMessage = {
+                    content: messageInput.value,
+                    receiverEmail: currentUser.email
+                };
+                
+                stompClient.send("/app/chat.send", {}, JSON.stringify(chatMessage));
+                messageInput.value = '';
+            }
+        }
+
+        function onMessageReceived(payload) {
+            const message = JSON.parse(payload.body);
+            
+            if (currentUser && message.sender.id === currentUser.id) {
+                displayMessage(message);
+            }
+            
+            // Update user list
+            loadConversations();
+        }
+
+        function displayMessage(message) {
+            const messageContainer = document.getElementById('messageContainer');
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message');
+            messageElement.classList.add(message.sender.id === currentUser?.id ? 'received' : 'sent');
+            
+            const senderName = message.sender.id === currentUser?.id ? currentUser.username : 'You';
+            messageElement.textContent = `${senderName}: ${message.content}`;
+            messageContainer.appendChild(messageElement);
+            messageContainer.scrollTop = messageContainer.scrollHeight;
+        }
+
+        function markAsRead(messageId) {
+            fetch(`/api/chat/messages/${messageId}/read`, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': 'Bearer ' + localStorage.getItem('token')
+                }
+            });
+        }
+
+        // Connect when page loads
+        connect();
+    </script>
+</body>
+</html> 

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Customer Service</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.0/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        .chat-container {
+            width: 600px;
+            margin: 20px auto;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .message-container {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            padding: 10px;
+            margin-bottom: 10px;
+            background-color: #f9f9f9;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            max-width: 80%;
+        }
+        .message.sent {
+            background-color: #e3f2fd;
+            margin-left: auto;
+        }
+        .message.received {
+            background-color: #f5f5f5;
+            margin-right: auto;
+        }
+        .input-container {
+            display: flex;
+            gap: 10px;
+        }
+        input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #1976D2;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .header h2 {
+            color: #1976D2;
+            margin: 0;
+        }
+        .header p {
+            color: #666;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="header">
+            <h2>Customer Service</h2>
+            <p>Send your questions or concerns to our support team</p>
+        </div>
+        <div class="message-container" id="messageContainer"></div>
+        <div class="input-container">
+            <input type="text" id="messageInput" placeholder="Type your message here...">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        let stompClient = null;
+        let username = null;
+
+        function connect() {
+            const socket = new SockJS('/ws');
+            stompClient = Stomp.over(socket);
+            
+            // Add your JWT token here
+            const token = localStorage.getItem('token');
+            
+            stompClient.connect({
+                'Authorization': 'Bearer ' + token
+            }, onConnected, onError);
+        }
+
+        function onConnected() {
+            console.log('Connected to WebSocket');
+            username = localStorage.getItem('username');
+            
+            // Subscribe to personal queue
+            stompClient.subscribe('/user/queue/messages', onMessageReceived);
+        }
+
+        function onError(error) {
+            console.error('Error connecting to WebSocket:', error);
+        }
+
+        function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            
+            if (messageInput.value) {
+                const chatMessage = {
+                    content: messageInput.value,
+                    receiverEmail: 'admin@carrental.com' // Hardcoded admin email
+                };
+                
+                stompClient.send("/app/chat.send", {}, JSON.stringify(chatMessage));
+                messageInput.value = '';
+            }
+        }
+
+        function onMessageReceived(payload) {
+            const message = JSON.parse(payload.body);
+            displayMessage(message);
+        }
+
+        function displayMessage(message) {
+            const messageContainer = document.getElementById('messageContainer');
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message');
+            messageElement.classList.add(message.sender.username === username ? 'sent' : 'received');
+            
+            const senderName = message.sender.username === username ? 'You' : 'Support Team';
+            messageElement.textContent = `${senderName}: ${message.content}`;
+            messageContainer.appendChild(messageElement);
+            messageContainer.scrollTop = messageContainer.scrollHeight;
+        }
+
+        // Connect when page loads
+        connect();
+    </script>
+</body>
+</html> 
